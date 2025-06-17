@@ -138,19 +138,6 @@ BuildOption: -DKDE_INSTALL_USE_QT_SYS_PATHS:BOOL=ON
 %description
 The KWin window manager.
 
-%package wayland
-Summary: Wayland Window System support for KWin
-Requires: %{name} = %{EVRD}
-Provides: %{name}-windowsystem = %{EVRD}
-Requires: %mklibname Qt6WaylandCompositor
-Requires: %mklibname Qt6WlShellIntegration
-Group: System/Libraries
-# Renamed 2025-05-01 after 6.0
-%rename plasma6-kwin-wayland
-
-%description wayland
-Wayland Window System support for KWin.
-
 %package devel
 Summary: Development files for the KDE Frameworks 5 Win library
 Group: Development/KDE and Qt
