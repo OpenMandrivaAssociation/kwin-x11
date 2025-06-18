@@ -120,7 +120,6 @@ BuildRequires: cmake(VulkanHeaders)
 BuildRequires: x11-server-xwayland
 BuildRequires: hwdata
 #BuildRequires: libhybris
-Requires: %{name}-windowsystem = %{EVRD}
 Requires: libplasma plasma-framework-common
 #(tpg) this is needed for kcm_kwin_effects
 Requires: glib-networking
