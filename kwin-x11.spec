@@ -10,7 +10,7 @@
 Summary: The KWin window manager for X11
 Name: kwin-x11
 Version: 6.4.0
-Release: %{?git:0.%{git}.}1
+Release: %{?git:0.%{git}.}2
 URL: https://kde.org/
 License: GPL
 Group: System/Libraries
@@ -133,6 +133,7 @@ BuildOption: -DBUILD_WITH_QT6:BOOL=ON
 BuildOption: -DKDE_INSTALL_USE_QT_SYS_PATHS:BOOL=ON
 # Renamed 2025-05-01 after 6.0
 %rename plasma6-kwin
+%rename plasma6-kwin-x11
 
 %description
 The KWin window manager.
