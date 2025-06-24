@@ -9,8 +9,8 @@
 
 Summary: The KWin window manager for X11
 Name: kwin-x11
-Version: 6.4.0
-Release: %{?git:0.%{git}.}2
+Version: 6.4.1
+Release: %{?git:0.%{git}.}1
 URL: https://kde.org/
 License: GPL
 Group: System/Libraries
