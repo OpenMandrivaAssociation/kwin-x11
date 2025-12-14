@@ -22,6 +22,7 @@ Source0: http://download.kde.org/%{stable}/plasma/%{plasmaver}/kwin-x11-%{versio
 Patch0: kwin-6.3.3-wayland-egl-is-wayland.patch
 # (tpg) is it still needed ?
 #Patch1: kwin-5.3.0-enable-minimizeall.patch
+Patch2: https://invent.kde.org/plasma/kwin/-/commit/ef4504320de2c3a7c7aebcf083d75db361f802ae.patch
 
 BuildRequires: appstream
 BuildRequires: pkgconfig(egl)
