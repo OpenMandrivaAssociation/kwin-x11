@@ -144,6 +144,7 @@ The KWin window manager.
 %package devel
 Summary: Development files for the KDE Frameworks Win library
 Group: Development/KDE and Qt
+Requires: %{name} = %{EVRD}
 # Renamed 2025-05-01 after 6.0
 %rename plasma6-kwin-devel
 
