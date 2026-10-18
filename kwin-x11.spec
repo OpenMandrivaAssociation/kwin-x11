@@ -10,7 +10,7 @@
 Summary: The KWin window manager for X11
 Name: kwin-x11
 Version: 6.7.5
-Release: %{?git:0.%{git}.}2
+Release: %{?git:0.%{git}.}3
 URL: https://kde.org/
 License: GPL
 Group: System/Libraries
@@ -23,6 +23,10 @@ Patch0: kwin-6.3.3-wayland-egl-is-wayland.patch
 # (tpg) is it still needed ?
 #Patch1: kwin-5.3.0-enable-minimizeall.patch
 Patch2: https://invent.kde.org/plasma/kwin/-/commit/ef4504320de2c3a7c7aebcf083d75db361f802ae.patch
+# kglobalacceld 6.8 dropped KGlobalAccelInterface. Keep the external X11 daemon
+# for a real X11 session, and talk to KGlobalAccelD::keyEvent only when this
+# compositor is running as Wayland. kscreenlocker 6.8 has no AcquiringLock.
+Patch3: kwin-x11-6.7.5-plasma-6.8-apis.patch
 
 BuildRequires: appstream
 BuildRequires: pkgconfig(egl)
@@ -102,14 +106,14 @@ BuildRequires: cmake(Wayland) >= 5.90.0
 BuildRequires: cmake(KDecoration3)
 BuildRequires: cmake(KF6IdleTime)
 BuildRequires: cmake(KF6GlobalAccel)
-BuildRequires: cmake(KScreenLocker) > 5.27.50
+BuildRequires: cmake(KScreenLocker) >= 6.8
 BuildRequires: cmake(Breeze)
 BuildRequires: cmake(KF6Kirigami2)
 BuildRequires: cmake(KF6Runner)
 BuildRequires: cmake(KF6GlobalAccel)
 BuildRequires: cmake(KF6Auth)
-BuildRequires: cmake(KGlobalAccelD)
-BuildRequires: cmake(PlasmaWaylandProtocols)
+BuildRequires: cmake(KGlobalAccelD) >= 6.8
+BuildRequires: cmake(PlasmaWaylandProtocols) >= 1.23
 BuildRequires: pkgconfig(xkbcommon)
 BuildRequires: pkgconfig(lcms2)
 BuildRequires: pkgconfig(libpipewire-0.3)
