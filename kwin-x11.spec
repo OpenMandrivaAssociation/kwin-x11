@@ -141,6 +141,9 @@ BuildSystem: cmake
 BuildOption: -DBUILD_QCH:BOOL=ON
 BuildOption: -DBUILD_WITH_QT6:BOOL=ON
 BuildOption: -DKDE_INSTALL_USE_QT_SYS_PATHS:BOOL=ON
+# Integration tests import the in-process KGlobalAccel plugin. That plugin is
+# not built against kglobalacceld 6.8. The session binary does not import it.
+BuildOption: -DBUILD_TESTING:BOOL=OFF
 # Renamed 2025-05-01 after 6.0
 %rename plasma6-kwin
 %rename plasma6-kwin-x11
