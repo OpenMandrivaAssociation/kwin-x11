@@ -27,6 +27,9 @@ Patch2: https://invent.kde.org/plasma/kwin/-/commit/ef4504320de2c3a7c7aebcf083d7
 # for a real X11 session, and talk to KGlobalAccelD::keyEvent only when this
 # compositor is running as Wayland. kscreenlocker 6.8 has no AcquiringLock.
 Patch3: kwin-x11-6.7.5-plasma-6.8-apis.patch
+# The in-process shortcut plugin is gone, so the integration tests no longer
+# inherit KF6GlobalAccel headers from it.
+Patch4: kwin-x11-6.7.5-link-globalaccel-tests.patch
 
 BuildRequires: appstream
 BuildRequires: pkgconfig(egl)
