@@ -10,7 +10,7 @@
 Summary: The KWin window manager for X11
 Name: kwin-x11
 Version: 6.7.5
-Release: %{?git:0.%{git}.}3
+Release: %{?git:0.%{git}.}4
 URL: https://kde.org/
 License: GPL
 Group: System/Libraries
@@ -30,6 +30,13 @@ Patch3: kwin-x11-6.7.5-plasma-6.8-apis.patch
 # The in-process shortcut plugin is gone, so the integration tests no longer
 # inherit KF6GlobalAccel headers from it.
 Patch4: kwin-x11-6.7.5-link-globalaccel-tests.patch
+# X11-relevant fixes from Plasma 6.8, ported onto 6.7.5. Includes the RandR
+# pixel-clock overflow, Alt+Tab modifier release, thumbnail popup grab,
+# fullscreen-effect switcher guard, expo clamp, peek animation and config
+# reload, offscreen placement, null tile parent, window view borders,
+# unbuffered screenshots, unmanaged focus, DPMS filter lifetime, script
+# shutdown, zoom push anchoring, and GL alpha swizzle.
+Patch5: kwin-x11-6.7.5-backport-6.8-fixes.patch
 
 BuildRequires: appstream
 BuildRequires: pkgconfig(egl)

@@ -1,0 +1,423 @@
+diff -ruN a/src/backends/x11/standalone/x11_standalone_backend.cpp b/src/backends/x11/standalone/x11_standalone_backend.cpp
+--- a/src/backends/x11/standalone/x11_standalone_backend.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/backends/x11/standalone/x11_standalone_backend.cpp	2026-10-22 00:56:27.209908030 +0200
+@@ -305,8 +305,8 @@
+                     if (info->mode == mode.id) {
+                         if (mode.htotal != 0 && mode.vtotal != 0) { // BUG 313996
+                             // refresh rate calculation - WTF was wikipedia 1998 when I needed it?
+-                            int dotclock = mode.dot_clock,
+-                                vtotal = mode.vtotal;
++                            uint64_t dotclock = mode.dot_clock,
++                                     vtotal = mode.vtotal;
+                             if (mode.mode_flags & XCB_RANDR_MODE_FLAG_INTERLACE) {
+                                 dotclock *= 2;
+                             }
+diff -ruN a/src/dpmsinputeventfilter.cpp b/src/dpmsinputeventfilter.cpp
+--- a/src/dpmsinputeventfilter.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/dpmsinputeventfilter.cpp	2026-10-22 00:56:57.085384801 +0200
+@@ -102,11 +102,15 @@
+     if (m_enableDoubleTap) {
+         m_touchPoints.removeAll(id);
+         if (m_touchPoints.isEmpty() && m_doubleTapTimer.isValid() && m_secondTap) {
+-            if (m_doubleTapTimer.elapsed() < qApp->doubleClickInterval()) {
+-                notify();
+-            }
++            const bool wakeUp = m_doubleTapTimer.elapsed() < qApp->doubleClickInterval();
++            // notify() turns the outputs back on. That destroys this filter
++            // when the wake reaches maybeDestroyDpmsFilter(), so drop our
++            // state before the call.
+             m_doubleTapTimer.invalidate();
+             m_secondTap = false;
++            if (wakeUp) {
++                notify();
++            }
+         }
+     }
+     return true;
+diff -ruN a/src/input.cpp b/src/input.cpp
+--- a/src/input.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/input.cpp	2026-10-22 00:56:57.089929298 +0200
+@@ -1805,9 +1805,14 @@
+ 
+         if (event->state == KeyboardKeyState::Repeated || event->state == KeyboardKeyState::Pressed) {
+             workspace()->tabbox()->keyPress(*event);
+-        } else if (event->modifiersRelevantForGlobalShortcuts == Qt::NoModifier) {
++        } else if (event->state == KeyboardKeyState::Released) {
++            // Re-evaluate on every key release so the switcher can close once
++            // the activation modifiers are no longer held, regardless of the
++            // release order.
+             workspace()->tabbox()->modifiersReleased();
+-            return false;
++            // If the release closed the switcher, let the event propagate to
++            // the rest of the system instead of swallowing it.
++            return workspace()->tabbox()->isGrabbed();
+         }
+         return true;
+     }
+diff -ruN a/src/input.h b/src/input.h
+--- a/src/input.h	2026-09-08 12:53:52.000000000 +0200
++++ b/src/input.h	2026-10-22 00:56:57.150273165 +0200
+@@ -140,7 +140,11 @@
+     template<class UnaryPredicate>
+     void processFilters(UnaryPredicate function)
+     {
+-        for (const auto filter : std::as_const(m_filters)) {
++        // A filter may uninstall and delete itself while handling the event.
++        // DpmsInputEventFilter does that when it wakes the outputs. Iterate a
++        // copy so the loop stays valid. The pointer is not used after the call.
++        const auto filters = m_filters;
++        for (const auto filter : filters) {
+             if (function(filter)) {
+                 return;
+             }
+@@ -163,7 +167,11 @@
+     template<class UnaryFunction>
+     void processSpies(UnaryFunction function)
+     {
+-        std::for_each(m_spies.constBegin(), m_spies.constEnd(), function);
++        // Spies can delete themselves during dispatch too, see processFilters().
++        const auto spies = m_spies;
++        for (const auto spy : spies) {
++            function(spy);
++        }
+     }
+ 
+     KeyboardInputRedirection *keyboard() const
+diff -ruN a/src/opengl/gltexture.cpp b/src/opengl/gltexture.cpp
+--- a/src/opengl/gltexture.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/opengl/gltexture.cpp	2026-10-22 00:56:57.150273165 +0200
+@@ -206,6 +206,12 @@
+     glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+     glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+ 
++    // QImage::convertTo leaves a missing alpha channel at 0. Swizzle it to 1
++    // so OpenGL does not treat that channel as transparency.
++    if (supportsSwizzle()) {
++        glTexParameteri(d->m_target, GL_TEXTURE_SWIZZLE_A, image.hasAlphaChannel() ? GL_ALPHA : GL_ONE);
++    }
++
+     unbind();
+ }
+ 
+@@ -591,6 +597,9 @@
+         glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, im.width(), im.height(), 0, format, type, im.constBits());
+     }
+     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++    if (supportsSwizzle()) {
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, image.hasAlphaChannel() ? GL_ALPHA : GL_ONE);
++    }
+     glBindTexture(GL_TEXTURE_2D, 0);
+ 
+     return std::unique_ptr<GLTexture>(new GLTexture(GL_TEXTURE_2D, texture, internalFormat, image.size(), 1, true, OutputTransform::FlipY));
+diff -ruN a/src/plugins/eyeonscreen/package/contents/code/main.js b/src/plugins/eyeonscreen/package/contents/code/main.js
+--- a/src/plugins/eyeonscreen/package/contents/code/main.js	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/eyeonscreen/package/contents/code/main.js	2026-10-22 00:56:27.345909689 +0200
+@@ -69,7 +69,6 @@
+                     animate({
+                         window: w,
+                         duration: eyeOnScreenEffect.duration,
+-                        delay: eyeOnScreenEffect.duration,
+                         animations: [{
+                             type: Effect.Scale,
+                             curve: QEasingCurve.OutCubic,
+@@ -90,6 +89,7 @@
+     },
+     init: function () {
+         eyeOnScreenEffect.loadConfig();
++        effect.configChanged.connect(eyeOnScreenEffect.loadConfig);
+         effects.showingDesktopChanged.connect(eyeOnScreenEffect.slurp);
+     }
+ };
+diff -ruN a/src/plugins/private/expolayout.cpp b/src/plugins/private/expolayout.cpp
+--- a/src/plugins/private/expolayout.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/private/expolayout.cpp	2026-10-22 00:56:27.213908079 +0200
+@@ -678,16 +678,19 @@
+                             shortSide * m_relativeMarginTop,
+                             shortSide * m_relativeMarginRight,
+                             shortSide * m_relativeMarginBottom);
+-    const qreal minLength = m_relativeMinLength * shortSide;
+-    const QRectF minSize = QRectF(0, 0, minLength, minLength);
++    const qreal effectiveMinSizeFactor = std::min(m_relativeMinLength, 1.0);
++    const QRectF minSize(0, 0, effectiveMinSizeFactor * area.width(), effectiveMinSizeFactor * area.height());
++
++    // windows bigger than 4x the area are considered ill-behaved and their sizes are clipped
++    const qreal effectiveMaxSizeFactor = 4;
++    const QRectF maxSize(0, 0, effectiveMaxSizeFactor * area.width(), effectiveMaxSizeFactor * area.height());
+ 
+     QList<QPointF> centers;
+     for (const QRectF &windowSize : windowSizes) {
+         centers.push_back(windowSize.center());
+     }
+ 
+-    // windows bigger than 4x the area are considered ill-behaved and their sizes are clipped
+-    const auto adjustedSizes = adjustSizes(minSize, QRectF(0, 0, 4 * area.width(), 4 * area.height()), margins, windowSizes);
++    const auto adjustedSizes = adjustSizes(minSize, maxSize, margins, windowSizes);
+ 
+     if (placementMode() == PlacementMode::Rows) {
+         LayeredPacking bestPacking = findGoodPacking(area, adjustedSizes, centers, m_idealWidthRatio, m_searchTolerance);
+diff -ruN a/src/plugins/screenshot/screenshotdbusinterface2.cpp b/src/plugins/screenshot/screenshotdbusinterface2.cpp
+--- a/src/plugins/screenshot/screenshotdbusinterface2.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/screenshot/screenshotdbusinterface2.cpp	2026-10-22 00:56:27.209908030 +0200
+@@ -53,7 +53,7 @@
+         }
+ 
+         QFile file;
+-        if (!file.open(m_fileDescriptor.get(), QIODevice::WriteOnly)) {
++        if (!file.open(m_fileDescriptor.get(), QIODevice::WriteOnly | QIODevice::Unbuffered)) {
+             qCWarning(KWIN_SCREENSHOT) << Q_FUNC_INFO << "failed to open pipe:" << file.errorString();
+             return;
+         }
+diff -ruN a/src/plugins/windowaperture/package/contents/code/main.js b/src/plugins/windowaperture/package/contents/code/main.js
+--- a/src/plugins/windowaperture/package/contents/code/main.js	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/windowaperture/package/contents/code/main.js	2026-10-22 00:56:27.209908030 +0200
+@@ -218,6 +218,7 @@
+     },
+     init: function () {
+         badBadWindowsEffect.loadConfig();
++        effect.configChanged.connect(badBadWindowsEffect.loadConfig);
+         effects.showingDesktopChanged.connect(badBadWindowsEffect.setShowingDesktop);
+         effects.showingDesktopChanged.connect(badBadWindowsEffect.offToCorners);
+         effect.animationEnded.connect(badBadWindowsEffect.animationEnded);
+diff -ruN a/src/plugins/windowview/windowvieweffect.cpp b/src/plugins/windowview/windowvieweffect.cpp
+--- a/src/plugins/windowview/windowvieweffect.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/windowview/windowvieweffect.cpp	2026-10-22 00:56:57.085384801 +0200
+@@ -417,7 +417,7 @@
+         toggleMode(ModeAllDesktops);
+     } else if (m_borderActivateClass.contains(border)) {
+         toggleMode(ModeWindowClass);
+-    } else if (m_touchBorderActivateClassCurrentDesktop.contains(border)) {
++    } else if (m_borderActivateClassCurrentDesktop.contains(border)) {
+         toggleMode(ModeWindowClassCurrentDesktop);
+     } else {
+         return false;
+diff -ruN a/src/plugins/zoom/zoom.cpp b/src/plugins/zoom/zoom.cpp
+--- a/src/plugins/zoom/zoom.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/zoom/zoom.cpp	2026-10-22 00:56:57.302275020 +0200
+@@ -26,6 +26,8 @@
+ 
+ #include <QAction>
+ 
++#include <algorithm>
++
+ using namespace std::chrono_literals;
+ 
+ static void ensureResources()
+@@ -326,6 +328,15 @@
+         yTranslation = std::min(0, std::max(int(screenSize.height() - screenSize.height() * m_zoom), int(screenSize.height() / 2 - m_prevPoint.y() * m_zoom)));
+         break;
+     case MouseTrackingPush: {
++        if (m_zoom != m_prevZoom && m_zoom > 1.0) {
++            // Keep the pointer at the same place on the screen while the zoom
++            // level changes, instead of zooming towards the previous area.
++            const QPoint anchor = m_cursorPoint + (m_prevPoint - m_cursorPoint) * ((m_prevZoom - 1.0) / (m_zoom - 1.0));
++            m_prevPoint.setX(std::clamp(anchor.x(), 0, screenSize.width()));
++            m_prevPoint.setY(std::clamp(anchor.y(), 0, screenSize.height()));
++        }
++        m_prevZoom = m_zoom;
++
+         // touching an edge of the screen moves the zoom-area in that direction.
+         const int x = m_cursorPoint.x() * m_zoom - m_prevPoint.x() * (m_zoom - 1.0);
+         const int y = m_cursorPoint.y() * m_zoom - m_prevPoint.y() * (m_zoom - 1.0);
+@@ -464,7 +475,8 @@
+         setTargetZoom(to);
+     }
+     m_cursorPoint = effects->cursorPos().toPoint();
+-    if (m_mouseTracking == MouseTrackingDisabled) {
++    if (m_mouseTracking == MouseTrackingDisabled || (m_mouseTracking == MouseTrackingPush && m_zoom == 1.0)) {
++        // Push mode must start at the pointer, not where the previous zoom ended.
+         m_prevPoint = m_cursorPoint;
+     }
+     effects->addRepaintFull();
+diff -ruN a/src/plugins/zoom/zoom.h b/src/plugins/zoom/zoom.h
+--- a/src/plugins/zoom/zoom.h	2026-09-08 12:53:52.000000000 +0200
++++ b/src/plugins/zoom/zoom.h	2026-10-22 00:56:57.085384801 +0200
+@@ -120,6 +120,7 @@
+     double m_zoom = 1.0;
+     double m_targetZoom = 1.0;
+     double m_sourceZoom = 1.0;
++    double m_prevZoom = 1.0;
+     double m_zoomFactor = 1.25;
+     MouseTrackingType m_mouseTracking = MouseTrackingProportional;
+     MousePointerType m_mousePointer = MousePointerScale;
+diff -ruN a/src/tabbox/switchers/thumbnail_grid/contents/ui/main.qml b/src/tabbox/switchers/thumbnail_grid/contents/ui/main.qml
+--- a/src/tabbox/switchers/thumbnail_grid/contents/ui/main.qml	2026-09-08 12:53:52.000000000 +0200
++++ b/src/tabbox/switchers/thumbnail_grid/contents/ui/main.qml	2026-10-22 00:56:27.209908030 +0200
+@@ -24,7 +24,7 @@
+         delegate: PlasmaCore.Dialog {
+             location: PlasmaCore.Types.Floating
+             visible: true
+-            flags: Qt.Popup | Qt.X11BypassWindowManagerHint
++            flags: Qt.ToolTip | Qt.X11BypassWindowManagerHint
+             x: tabBox.screenGeometry.x + tabBox.screenGeometry.width * 0.5 - dialogMainItem.width * 0.5
+             y: tabBox.screenGeometry.y + tabBox.screenGeometry.height * 0.5 - dialogMainItem.height * 0.5
+ 
+diff -ruN a/src/tabbox/tabbox.cpp b/src/tabbox/tabbox.cpp
+--- a/src/tabbox/tabbox.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/tabbox/tabbox.cpp	2026-10-22 00:56:57.089929298 +0200
+@@ -814,7 +814,9 @@
+ 
+ void TabBox::navigatingThroughWindows(bool forward, const QList<QKeySequence> &shortcut, TabBoxMode mode)
+ {
+-    if (!m_ready || isGrabbed()) {
++    // Compositing can be off on X11, so effects is null. A fullscreen effect
++    // (Present Windows, Desktop Grid) must not also open the switcher.
++    if (!m_ready || isGrabbed() || (effects && effects->hasActiveFullScreenEffect())) {
+         return;
+     }
+     if (!options->focusPolicyIsReasonable()) {
+@@ -1151,12 +1153,29 @@
+     }
+ }
+ 
++QList<QKeySequence> TabBox::activationShortcut(TabBoxMode mode) const
++{
++    switch (mode) {
++    case TabBoxWindowsMode:
++        return m_cutWalkThroughWindows;
++    case TabBoxWindowsAlternativeMode:
++        return m_cutWalkThroughWindowsAlternative;
++    case TabBoxCurrentAppWindowsMode:
++        return m_cutWalkThroughCurrentAppWindows;
++    case TabBoxCurrentAppWindowsAlternativeMode:
++        return m_cutWalkThroughCurrentAppWindowsAlternative;
++    }
++    return {};
++}
++
+ void TabBox::modifiersReleased()
+ {
+     if (m_noModifierGrab) {
+         return;
+     }
+-    if (m_tabGrab) {
++    // Close as soon as the activating shortcut's modifiers are up, even if
++    // another modifier is still held or the keys were released out of order.
++    if (m_tabGrab && !areModKeysDepressed(activationShortcut(mode()))) {
+         accept();
+     }
+ }
+diff -ruN a/src/tabbox/tabbox.h b/src/tabbox/tabbox.h
+--- a/src/tabbox/tabbox.h	2026-09-08 12:53:52.000000000 +0200
++++ b/src/tabbox/tabbox.h	2026-10-22 00:56:57.094973121 +0200
+@@ -250,6 +250,7 @@
+     void KDEWalkThroughWindows(bool forward);
+     void CDEWalkThroughWindows(bool forward);
+     void KDEOneStepThroughWindows(bool forward, TabBoxMode mode); // TabBoxWindowsMode | TabBoxWindowsAlternativeMode
++    QList<QKeySequence> activationShortcut(TabBoxMode mode) const;
+     bool establishTabBoxGrab();
+     void removeTabBoxGrab();
+     template<typename Slot>
+diff -ruN a/src/tabbox/x11_filter.cpp b/src/tabbox/x11_filter.cpp
+--- a/src/tabbox/x11_filter.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/tabbox/x11_filter.cpp	2026-10-22 00:56:57.085384801 +0200
+@@ -111,47 +111,12 @@
+     workspace()->tabbox()->keyPress(keyKDE);
+ }
+ 
+-void X11Filter::keyRelease(xcb_generic_event_t *event)
++void X11Filter::keyRelease(xcb_generic_event_t *)
+ {
+-    const auto ev = reinterpret_cast<xcb_key_release_event_t *>(event);
+-    unsigned int mk = ev->state & (KKeyServer::modXShift() | KKeyServer::modXCtrl() | KKeyServer::modXAlt() | KKeyServer::modXMeta());
+-    // ev.state is state before the key release, so just checking mk being 0 isn't enough
+-    // using XQueryPointer() also doesn't seem to work well, so the check that all
+-    // modifiers are released: only one modifier is active and the currently released
+-    // key is this modifier - if yes, release the grab
+-    int mod_index = -1;
+-    for (int i = XCB_MAP_INDEX_SHIFT;
+-         i <= XCB_MAP_INDEX_5;
+-         ++i) {
+-        if ((mk & (1 << i)) != 0) {
+-            if (mod_index >= 0) {
+-                return;
+-            }
+-            mod_index = i;
+-        }
+-    }
+-    bool release = false;
+-    if (mod_index == -1) {
+-        release = true;
+-    } else {
+-        Xcb::ModifierMapping xmk;
+-        if (xmk) {
+-            xcb_keycode_t *keycodes = xmk.keycodes();
+-            const int maxIndex = xmk.size();
+-            for (int i = 0; i < xmk->keycodes_per_modifier; ++i) {
+-                const int index = xmk->keycodes_per_modifier * mod_index + i;
+-                if (index >= maxIndex) {
+-                    continue;
+-                }
+-                if (keycodes[index] == ev->detail) {
+-                    release = true;
+-                }
+-            }
+-        }
+-    }
+-    if (release) {
+-        workspace()->tabbox()->modifiersReleased();
+-    }
++    // Ask the switcher on every release. The old "last modifier only" check
++    // returned while Alt and another modifier were both down, so releasing
++    // Alt first left the X grab stuck and later Alt+Tab was ignored.
++    workspace()->tabbox()->modifiersReleased();
+ }
+ 
+ }
+diff -ruN a/src/tiles/customtile.cpp b/src/tiles/customtile.cpp
+--- a/src/tiles/customtile.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/tiles/customtile.cpp	2026-10-22 00:56:27.209908030 +0200
+@@ -255,7 +255,8 @@
+ 
+ void CustomTile::moveByPixels(const QPointF &delta)
+ {
+-    if (static_cast<CustomTile *>(parentTile())->layoutDirection() != LayoutDirection::Floating) {
++    const auto parent = static_cast<CustomTile *>(parentTile());
++    if (!parent || parent->layoutDirection() != LayoutDirection::Floating) {
+         return;
+     }
+ 
+diff -ruN a/src/window.cpp b/src/window.cpp
+--- a/src/window.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/window.cpp	2026-10-22 00:56:27.225908225 +0200
+@@ -4303,7 +4303,7 @@
+     if (geom->top() > screenArea.bottom()) {
+         geom->moveTop(screenArea.bottom() - screenArea.height() / 4);
+     } else if (geom->bottom() < screenArea.top()) {
+-        geom->moveBottom(screenArea.top() + screenArea.width() / 4);
++        geom->moveBottom(screenArea.top() + screenArea.height() / 4);
+     }
+ }
+ 
+diff -ruN a/src/workspace.cpp b/src/workspace.cpp
+--- a/src/workspace.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/workspace.cpp	2026-10-22 00:56:57.094973121 +0200
+@@ -465,6 +465,11 @@
+ 
+ Workspace::~Workspace()
+ {
++    // Scripts call back into Workspace. Destroy them before windows go away
++    // and before _self is cleared. ~QObject would otherwise delete Scripting
++    // only after that.
++    delete Scripting::self();
++
+     blockStackingUpdates(true);
+ 
+ #if KWIN_BUILD_X11
+diff -ruN a/src/x11window.cpp b/src/x11window.cpp
+--- a/src/x11window.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/x11window.cpp	2026-10-22 00:56:27.225908225 +0200
+@@ -2620,12 +2620,12 @@
+ 
+ bool X11Window::wantsInput() const
+ {
+-    return rules()->checkAcceptFocus(acceptsFocus() || info->supportsProtocol(NET::TakeFocusProtocol));
++    return rules()->checkAcceptFocus(acceptsFocus() || info->supportsProtocol(NET::TakeFocusProtocol)) && isClient();
+ }
+ 
+ bool X11Window::acceptsFocus() const
+ {
+-    return info->input();
++    return info->input() && isClient();
+ }
+ 
+ void X11Window::doSetQuickTileMode()
