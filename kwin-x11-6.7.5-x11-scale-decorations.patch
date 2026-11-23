@@ -1,0 +1,143 @@
+diff -ruN a/plasma-kwin_x11.service.in b/plasma-kwin_x11.service.in
+--- a/plasma-kwin_x11.service.in	2026-09-08 12:53:52.000000000 +0200
++++ b/plasma-kwin_x11.service.in	2026-11-16 13:28:03.703802494 +0100
+@@ -1,6 +1,9 @@
+ [Unit]
+ Description=KDE Window Manager
+ After=plasma-kcminit.service
++# After= does not start the unit. Phase 0 has to finish before kwin
++# connects, or Xft.dpi is still missing and title-bar buttons stay small.
++Wants=plasma-kcminit.service
+ PartOf=graphical-session.target
+ 
+ [Service]
+diff -ruN a/src/decorations/settings.cpp b/src/decorations/settings.cpp
+--- a/src/decorations/settings.cpp	2026-09-08 12:53:52.000000000 +0200
++++ b/src/decorations/settings.cpp	2026-11-16 13:42:26.929414282 +0100
+@@ -15,10 +15,65 @@
+ #include "virtualdesktops.h"
+ #include "workspace.h"
+ 
++#include <KConfig>
+ #include <KConfigGroup>
++#include <KConfigWatcher>
+ #include <KDecoration3/DecorationSettings>
++#include <KSharedConfig>
+ 
+ #include <QFontDatabase>
++#include <QGuiApplication>
++#include <QLocale>
++#include <QScreen>
++#include <QtNumeric>
++
++namespace
++{
++// First positive ScreenScaleFactors entry, else ScaleFactor, else 1.
++qreal x11GlobalScale()
++{
++    KConfig globals(QStringLiteral("kdeglobals"));
++    const KConfigGroup kscreen = globals.group(QStringLiteral("KScreen"));
++    const QString factors = kscreen.readEntry(QStringLiteral("ScreenScaleFactors"), QString());
++    const auto parts = factors.split(QLatin1Char(';'), Qt::SkipEmptyParts);
++    for (const QString &part : parts) {
++        const int eq = part.indexOf(QLatin1Char('='));
++        if (eq < 0) {
++            continue;
++        }
++        bool ok = false;
++        const qreal value = QLocale::c().toDouble(part.mid(eq + 1), &ok);
++        if (ok && value > 0.0) {
++            return value;
++        }
++    }
++    if (kscreen.hasKey(QStringLiteral("ScaleFactor"))) {
++        const qreal scale = kscreen.readEntry(QStringLiteral("ScaleFactor"), 1.0);
++        if (scale > 0.0) {
++            return scale;
++        }
++    }
++    return 1.0;
++}
++
++// Breeze sizes buttons from the title font, not from output scale. X11 leaves
++// that scale at 1 and turns Qt screen scaling off. Multiply only the part of
++// the global factor that logical DPI has not already applied.
++qreal x11DecorationExtraScale()
++{
++    auto *app = qobject_cast<QGuiApplication *>(QCoreApplication::instance());
++    if (!app || app->platformName() != QLatin1String("xcb")) {
++        return 1.0;
++    }
++    const qreal globalScale = x11GlobalScale();
++    const QScreen *screen = app->primaryScreen();
++    const qreal logicalDpi = screen ? screen->logicalDotsPerInchY() : 96.0;
++    if (logicalDpi <= 1.0) {
++        return globalScale;
++    }
++    return globalScale / (logicalDpi / 96.0);
++}
++}
+ 
+ namespace KWin
+ {
+@@ -45,6 +100,24 @@
+     });
+     connect(Workspace::self(), &Workspace::configChanged, this, &SettingsImpl::readSettings);
+     connect(Workspace::self()->decorationBridge(), &DecorationBridge::metaDataLoaded, this, &SettingsImpl::readSettings);
++
++    if (auto *guiApp = qobject_cast<QGuiApplication *>(QCoreApplication::instance()); guiApp && guiApp->platformName() == QLatin1String("xcb")) {
++        connect(guiApp, &QGuiApplication::primaryScreenChanged, this, [this](QScreen *screen) {
++            if (screen) {
++                connect(screen, &QScreen::logicalDotsPerInchChanged, this, &SettingsImpl::readSettings, Qt::UniqueConnection);
++            }
++            readSettings();
++        });
++        if (QScreen *screen = guiApp->primaryScreen()) {
++            connect(screen, &QScreen::logicalDotsPerInchChanged, this, &SettingsImpl::readSettings, Qt::UniqueConnection);
++        }
++        m_scaleWatcher = KConfigWatcher::create(KSharedConfig::openConfig(QStringLiteral("kdeglobals")));
++        connect(m_scaleWatcher.data(), &KConfigWatcher::configChanged, this, [this](const KConfigGroup &group, const QByteArrayList &) {
++            if (group.name() == QLatin1String("KScreen")) {
++                readSettings();
++            }
++        });
++    }
+ }
+ 
+ SettingsImpl::~SettingsImpl() = default;
+@@ -167,7 +240,15 @@
+         m_borderSize = size;
+         Q_EMIT decorationSettings()->borderSizeChanged(m_borderSize);
+     }
+-    const QFont font = QFontDatabase::systemFont(QFontDatabase::TitleFont);
++    QFont font = QFontDatabase::systemFont(QFontDatabase::TitleFont);
++    const qreal extra = x11DecorationExtraScale();
++    if (qAbs(extra - 1.0) > 0.02) {
++        if (font.pointSizeF() > 0.0) {
++            font.setPointSizeF(font.pointSizeF() * extra);
++        } else if (font.pixelSize() > 0) {
++            font.setPixelSize(qMax(1, qRound(font.pixelSize() * extra)));
++        }
++    }
+     if (font != m_font) {
+         m_font = font;
+         Q_EMIT decorationSettings()->fontChanged(m_font);
+diff -ruN a/src/decorations/settings.h b/src/decorations/settings.h
+--- a/src/decorations/settings.h	2026-09-08 12:53:52.000000000 +0200
++++ b/src/decorations/settings.h	2026-11-16 13:28:03.792288044 +0100
+@@ -8,6 +8,7 @@
+ */
+ #pragma once
+ 
++#include <KConfigWatcher>
+ #include <KDecoration3/Private/DecorationSettingsPrivate>
+ 
+ #include <QObject>
+@@ -56,6 +57,7 @@
+     bool m_autoBorderSize = true;
+     bool m_closeDoubleClickMenu = false;
+     QFont m_font;
++    KConfigWatcher::Ptr m_scaleWatcher;
+ };
+ } // Decoration
+ } // KWin

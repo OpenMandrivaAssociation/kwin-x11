@@ -9,8 +9,8 @@
 
 Summary: The KWin window manager for X11
 Name: kwin-x11
-Version: 6.7.5
-Release: %{?git:0.%{git}.}4
+Version: 6.7.6
+Release: %{?git:0.%{git}.}1
 URL: https://kde.org/
 License: GPL
 Group: System/Libraries
@@ -30,13 +30,18 @@ Patch3: kwin-x11-6.7.5-plasma-6.8-apis.patch
 # The in-process shortcut plugin is gone, so the integration tests no longer
 # inherit KF6GlobalAccel headers from it.
 Patch4: kwin-x11-6.7.5-link-globalaccel-tests.patch
-# X11-relevant fixes from Plasma 6.8, ported onto 6.7.5. Includes the RandR
-# pixel-clock overflow, Alt+Tab modifier release, thumbnail popup grab,
-# fullscreen-effect switcher guard, expo clamp, peek animation and config
-# reload, offscreen placement, null tile parent, window view borders,
-# unbuffered screenshots, unmanaged focus, DPMS filter lifetime, script
-# shutdown, zoom push anchoring, and GL alpha swizzle.
+# X11-relevant fixes from Plasma 6.8, ported onto 6.7.5. 6.7.6 already has
+# the RandR pixel-clock overflow fix, so that hunk is gone. What remains is
+# the Alt+Tab modifier release, thumbnail popup grab, fullscreen-effect
+# switcher guard, expo clamp, peek animation and config reload, offscreen
+# placement, null tile parent, window view borders, unbuffered screenshots,
+# unmanaged focus, DPMS filter lifetime, script shutdown, zoom push
+# anchoring, and GL alpha swizzle.
 Patch5: kwin-x11-6.7.5-backport-6.8-fixes.patch
+# X11 leaves decoration scale at 1 and turns Qt scaling off, so title-bar
+# buttons stay 96 dpi. Grow the title font by the scale Xft.dpi has not
+# already applied, and start kcminit before kwin so Xft.dpi exists.
+Patch6: kwin-x11-6.7.5-x11-scale-decorations.patch
 
 BuildRequires: appstream
 BuildRequires: pkgconfig(egl)
